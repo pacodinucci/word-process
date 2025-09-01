@@ -1,103 +1,487 @@
-import Image from "next/image";
+// app/page.tsx
+"use client";
+import { useEffect, useMemo, useState } from "react";
+import { WordDropzone } from "@/components/global/word-dropzone";
+import { ResponsiveDialog } from "@/components/global/responsive-dialog";
+
+type Intervalo = {
+  desde?: number | null;
+  hasta?: number | null;
+  unidad?: string | null;
+} | null;
+
+// Para el diálogo (resumen)
+type Punzado = {
+  desde?: number | null;
+  hasta?: number | null;
+  unidad?: string | null;
+};
+
+type Ensayo = {
+  nombre?: string | null;
+  numero?: string | null;
+  intervalo?: {
+    desde?: number | null;
+    hasta?: number | null;
+    unidad?: string | null;
+  } | null;
+  fluidoRecuperado?: string | null;
+  totalRecuperado?: { valor?: number | null; unidad?: string | null } | null;
+  vazao?: string | null;
+  swab?: string | null;
+  nivelFluido?: string | null;
+  sopro?: string | null;
+  observacion?: string | null;
+};
+
+type CementacionTapon = {
+  tipo: "cementacion" | "squeeze" | "tampon_cemento" | "bpp";
+  intervalo?: {
+    desde?: number | null;
+    hasta?: number | null;
+    unidad?: string | null;
+  } | null; // requerido para cementación/squeeze (cuando aplique)
+  profundidad?: number | null; // para BPP (punto único)
+  unidadProfundidad?: string | null; // "m" por defecto si hay profundidad
+  zona?: string | null; // CPS-01, SERRARIA, etc.
+  observacion?: string | null;
+};
+
+type Intervencion = {
+  tipo: "ensayo" | "punzado" | "estimulacion" | "cementacion";
+  fechaISO?: string | null;
+  fechaTexto?: string | null;
+  numeroEnsayo?: string | null;
+  intervalo?: Intervalo;
+  fluidoRecuperado?: string | null;
+  fluidoRecuperadoClasificacion?:
+    | "oleo"
+    | "agua"
+    | "gas"
+    | "oleo_y_agua"
+    | "agua_y_oleo"
+    | "oleo_y_gas"
+    | "gas_y_oleo"
+    | "agua_y_gas"
+    | "gas_y_agua"
+    | "no_especificado"
+    | null;
+  totalRecuperado?: { valor?: number | null; unidad?: string | null } | null;
+  totalRecuperadoTexto?: string | null;
+  intervalosPunzado?: {
+    desde?: number | null;
+    hasta?: number | null;
+    unidad?: string | null;
+  }[];
+  observaciones?: string | null;
+};
+
+// Crudo que devuelve /api/word/interventions
+type RawIntervencion = {
+  index: number;
+  fechaISO: string | null;
+  fechaTexto: string | null;
+  text: string;
+};
 
 export default function Home() {
-  return (
-    <div className="font-sans grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20">
-      <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="font-mono list-inside list-decimal text-sm/6 text-center sm:text-left">
-          <li className="mb-2 tracking-[-.01em]">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] font-mono font-semibold px-1 py-0.5 rounded">
-              src/app/page.tsx
-            </code>
-            .
-          </li>
-          <li className="tracking-[-.01em]">
-            Save and see your changes instantly.
-          </li>
-        </ol>
+  const [loading, setLoading] = useState(false);
+  const [errorGeneral, setErrorGeneral] = useState<string | null>(null);
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:w-auto"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 w-full sm:w-auto md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
+  const [rawIntervenciones, setRawIntervenciones] = useState<RawIntervencion[]>(
+    []
+  );
+
+  // Estados por intervención (para diálogo)
+  const [summaryByIndex, setSummaryByIndex] = useState<
+    Record<number, string | undefined>
+  >({});
+  const [punzadosByIndex, setPunzadosByIndex] = useState<
+    Record<number, Punzado[] | undefined>
+  >({});
+  const [testsByIndex, setTestsByIndex] = useState<
+    Record<number, Ensayo[] | undefined>
+  >({});
+  const [cementacionesByIndex, setCementacionesByIndex] = useState<
+    Record<number, CementacionTapon[] | undefined>
+  >({});
+
+  const [summarizing, setSummarizing] = useState(false);
+  const [summaryError, setSummaryError] = useState<string | null>(null);
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
+
+  const busy = useMemo(() => loading || summarizing, [loading, summarizing]);
+
+  async function handleFileUpload(file: File) {
+    setLoading(true);
+    setErrorGeneral(null);
+    setRawIntervenciones([]);
+    setSummaryByIndex({});
+    setPunzadosByIndex({});
+    setTestsByIndex({});
+    setCementacionesByIndex({});
+    setDialogOpen(false);
+    setSelectedIndex(null);
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const res = await fetch("/api/word/interventions", {
+        method: "POST",
+        body: form,
+      });
+      const data = await res.json();
+      if (!res.ok || !data?.ok)
+        throw new Error(data?.error ?? `HTTP ${res.status}`);
+      setRawIntervenciones(data.interventions ?? []);
+    } catch (e: any) {
+      setErrorGeneral(e?.message ?? "Error");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // Abre el diálogo y (si no hay resumen guardado) llama a /api/word/summarize para esa intervención
+  async function abrirYAnalizar(idx: number) {
+    setSelectedIndex(idx);
+    setSummaryError(null);
+    setDialogOpen(true);
+
+    if (summaryByIndex[idx]) return; // ya tenemos cacheado
+
+    const item = rawIntervenciones.find((x) => x.index === idx);
+    if (!item) return;
+
+    try {
+      setSummarizing(true);
+      const res = await fetch("/api/word/summarize", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ item, detail: "auto" }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data?.ok)
+        throw new Error(data?.error ?? `HTTP ${res.status}`);
+
+      const s = data?.summaries?.[0];
+      setSummaryByIndex((p) => ({ ...p, [idx]: s?.resumen || "(sin datos)" }));
+      setPunzadosByIndex((p) => ({
+        ...p,
+        [idx]: Array.isArray(s?.punzados) ? s.punzados : [],
+      }));
+      setTestsByIndex((p) => ({
+        ...p,
+        [idx]: Array.isArray(s?.tests) ? s.tests : [],
+      }));
+      setCementacionesByIndex((p) => ({
+        ...p,
+        [idx]: Array.isArray(s?.cementaciones) ? s.cementaciones : [],
+      }));
+    } catch (e: any) {
+      setSummaryError(e?.message ?? "Error al resumir");
+    } finally {
+      setSummarizing(false);
+    }
+  }
+
+  // Reintentar desde el diálogo
+  async function reanalizarActual() {
+    if (selectedIndex == null) return;
+    setSummaryByIndex((p) => {
+      const { [selectedIndex]: _, ...rest } = p;
+      return rest;
+    });
+    setPunzadosByIndex((p) => {
+      const { [selectedIndex]: _, ...rest } = p;
+      return rest;
+    });
+    setTestsByIndex((p) => {
+      const { [selectedIndex]: _, ...rest } = p;
+      return rest;
+    });
+    setCementacionesByIndex((p) => {
+      const { [selectedIndex]: _, ...rest } = p;
+      return rest;
+    });
+    await abrirYAnalizar(selectedIndex);
+  }
+
+  const fmtFecha = (i: {
+    fechaISO?: string | null;
+    fechaTexto?: string | null;
+  }) => i.fechaISO ?? i.fechaTexto ?? null;
+
+  const fmtIntervalo = (
+    iv?: {
+      desde?: number | null;
+      hasta?: number | null;
+      unidad?: string | null;
+    } | null
+  ) =>
+    iv ? `${iv.desde ?? "?"}/${iv.hasta ?? "?"} ${iv.unidad ?? "m"}` : null;
+
+  const fmtProf = (p?: number | null, u?: string | null) =>
+    p != null ? `${p} ${u ?? "m"}` : null;
+
+  const labelTipoCem = (t: CementacionTapon["tipo"]) => {
+    switch (t) {
+      case "cementacion":
+        return "Cementación";
+      case "squeeze":
+        return "Squeeze / corrección de cementación";
+      case "tampon_cemento":
+        return "Tapón de cemento";
+      case "bpp":
+        return "BPP";
+      default:
+        return t;
+    }
+  };
+
+  useEffect(() => {
+    console.log({
+      rawIntervenciones,
+      summaryByIndex,
+      punzadosByIndex,
+      testsByIndex,
+      cementacionesByIndex,
+      selectedIndex,
+      dialogOpen,
+    });
+  }, [
+    rawIntervenciones,
+    summaryByIndex,
+    punzadosByIndex,
+    testsByIndex,
+    cementacionesByIndex,
+    selectedIndex,
+    dialogOpen,
+  ]);
+
+  return (
+    <main className="max-w-5xl mx-auto p-6 space-y-6">
+      <WordDropzone onPickFile={handleFileUpload} isProcessingFile={busy} />
+
+      {errorGeneral && <p className="text-red-600">{errorGeneral}</p>}
+      {!loading && !errorGeneral && rawIntervenciones.length === 0 && (
+        <p className="text-sm text-neutral-600">
+          Sin intervenciones detectadas.
+        </p>
+      )}
+
+      {/* Lista de intervenciones crudas, cada una con su botón */}
+      <div className="grid gap-3">
+        {rawIntervenciones.map((b) => (
+          <article key={b.index} className="border rounded-lg p-4">
+            <div className="flex items-center gap-2 mb-2">
+              <span className="text-xs uppercase tracking-wide px-2 py-0.5 rounded-full bg-neutral-100">
+                Intervención {b.index}
+              </span>
+              {fmtFecha(b) && (
+                <span className="text-xs text-neutral-500 ml-auto">
+                  {fmtFecha(b)}
+                </span>
+              )}
+            </div>
+
+            <pre className="whitespace-pre-wrap text-sm">{b.text}</pre>
+
+            <div className="mt-3 flex items-center gap-3">
+              <button
+                className="px-3 py-1.5 rounded bg-black text-white text-sm disabled:opacity-50"
+                onClick={() => abrirYAnalizar(b.index)}
+                disabled={busy}
+              >
+                {busy && selectedIndex === b.index
+                  ? "Analizando…"
+                  : "Analizar con IA"}
+              </button>
+              {summaryByIndex[b.index] && (
+                <span className="text-xs text-green-700">Resumen listo</span>
+              )}
+            </div>
+          </article>
+        ))}
+      </div>
+
+      {/* ===== Dialog ===== */}
+      <ResponsiveDialog
+        open={dialogOpen}
+        onOpenChange={(v) => setDialogOpen(v)}
+        title={
+          selectedIndex != null
+            ? `Resumen — Intervención ${selectedIndex}`
+            : "Resumen"
+        }
+        description="Resultado del análisis"
+      >
+        <div className="space-y-3 max-h-[80vh] overflow-y-auto">
+          {selectedIndex != null && (
+            <>
+              <p className="text-sm text-neutral-600">
+                {fmtFecha(
+                  rawIntervenciones.find((x) => x.index === selectedIndex) || {}
+                ) ?? ""}
+              </p>
+
+              {summarizing && <p className="text-sm">Analizando…</p>}
+              {summaryError && (
+                <p className="text-sm text-red-600">{summaryError}</p>
+              )}
+
+              {!summarizing && !summaryError && (
+                <>
+                  {/* Resumen */}
+                  <p className="text-sm whitespace-pre-wrap">
+                    {summaryByIndex[selectedIndex] ?? "—"}
+                  </p>
+
+                  {/* Punzados debajo del resumen */}
+                  {(punzadosByIndex[selectedIndex]?.length ?? 0) > 0 && (
+                    <div className="mt-3 border-t pt-3">
+                      <h3 className="text-sm font-medium mb-1">
+                        Punzados realizados
+                      </h3>
+                      <ul className="list-disc ml-5 text-sm">
+                        {punzadosByIndex[selectedIndex]!.map((iv, j) => (
+                          <li key={j}>{fmtIntervalo(iv)}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  {/* Ensayos detectados */}
+                  {(testsByIndex[selectedIndex]?.length ?? 0) > 0 && (
+                    <div className="mt-3 border-t pt-3">
+                      <h3 className="text-sm font-medium mb-2">
+                        Ensayos detectados
+                      </h3>
+                      <div className="grid gap-3">
+                        {testsByIndex[selectedIndex]!.map((t, i) => (
+                          <div key={i} className="rounded-lg border p-3">
+                            <div className="flex items-center gap-2">
+                              {(t.nombre || t.numero) && (
+                                <span className="text-xs uppercase tracking-wide px-2 py-0.5 rounded-full bg-neutral-100">
+                                  {t.nombre ?? `Ensayo ${t.numero}`}
+                                </span>
+                              )}
+                              {t.intervalo && (
+                                <span className="text-xs text-neutral-600 ml-auto">
+                                  {fmtIntervalo(t.intervalo)}
+                                </span>
+                              )}
+                            </div>
+                            <ul className="mt-2 text-sm space-y-1">
+                              {t.fluidoRecuperado && (
+                                <li>
+                                  <strong>Fluido:</strong> {t.fluidoRecuperado}
+                                </li>
+                              )}
+                              {t.totalRecuperado &&
+                                (t.totalRecuperado.valor != null ||
+                                  t.totalRecuperado.unidad) && (
+                                  <li>
+                                    <strong>Total recuperado:</strong>{" "}
+                                    {t.totalRecuperado.valor ?? ""}{" "}
+                                    {t.totalRecuperado.unidad ?? ""}
+                                  </li>
+                                )}
+                              {t.vazao && (
+                                <li>
+                                  <strong>Vazão:</strong> {t.vazao}
+                                </li>
+                              )}
+                              {t.swab && (
+                                <li>
+                                  <strong>Swab:</strong> {t.swab}
+                                </li>
+                              )}
+                              {t.nivelFluido && (
+                                <li>
+                                  <strong>Nivel de fluido:</strong>{" "}
+                                  {t.nivelFluido}
+                                </li>
+                              )}
+                              {t.sopro && (
+                                <li>
+                                  <strong>Sopro:</strong> {t.sopro}
+                                </li>
+                              )}
+                              {t.observacion && (
+                                <li className="text-neutral-700">
+                                  <strong>Obs. ensayo:</strong> {t.observacion}
+                                </li>
+                              )}
+                            </ul>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Cementaciones / Tapones (incluye BPP) */}
+                  {(cementacionesByIndex[selectedIndex]?.length ?? 0) > 0 && (
+                    <div className="mt-3 border-t pt-3">
+                      <h3 className="text-sm font-medium mb-2">
+                        Cimentaciones y tampones
+                      </h3>
+                      <div className="grid gap-3">
+                        {cementacionesByIndex[selectedIndex]!.map((c, k) => (
+                          <div key={k} className="rounded-lg border p-3">
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs uppercase tracking-wide px-2 py-0.5 rounded-full bg-neutral-100">
+                                {labelTipoCem(c.tipo)}
+                              </span>
+                              {c.zona && (
+                                <span className="text-xs text-neutral-600">
+                                  {c.zona}
+                                </span>
+                              )}
+                              {/* a la derecha: intervalo o profundidad */}
+                              <span className="text-xs text-neutral-600 ml-auto">
+                                {c.intervalo
+                                  ? `Intervalo: ${fmtIntervalo(c.intervalo)}`
+                                  : c.profundidad != null
+                                  ? `Prof.: ${fmtProf(
+                                      c.profundidad,
+                                      c.unidadProfundidad
+                                    )}`
+                                  : null}
+                              </span>
+                            </div>
+                            {c.observacion && (
+                              <p className="mt-2 text-sm text-neutral-700">
+                                {c.observacion}
+                              </p>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+
+              <div className="pt-2 flex gap-2">
+                <button
+                  className="px-3 py-1.5 rounded border text-sm"
+                  onClick={() => setDialogOpen(false)}
+                >
+                  Cerrar
+                </button>
+                <button
+                  className="px-3 py-1.5 rounded bg-black text-white text-sm disabled:opacity-50"
+                  onClick={reanalizarActual}
+                  disabled={summarizing || selectedIndex == null}
+                  title="Volver a pedir el resumen a la IA"
+                >
+                  Re-analizar
+                </button>
+              </div>
+            </>
+          )}
         </div>
-      </main>
-      <footer className="row-start-3 flex gap-[24px] flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
-    </div>
+      </ResponsiveDialog>
+    </main>
   );
 }
