@@ -23,6 +23,7 @@ type Punzado = {
 type Ensayo = {
   nombre?: string | null;
   numero?: string | null;
+  fecha?: string | null;
   intervalo?: {
     desde: number | null;
     hasta: number | null;
@@ -30,13 +31,17 @@ type Ensayo = {
   } | null;
   fluidoRecuperado?: string | null;
   totalRecuperado?: { valor: number | null; unidad: string | null } | null;
+  recuperadoTexto?: string | null;
   vazao?: string | null;
   swab?: string | null;
   nivelFluido?: string | null;
+  salinidad?: string | null;
+  bsw?: string | null;
+  gradosAPI?: string | null;
+  presion?: string | null;
   sopro?: string | null;
   observacion?: string | null;
 };
-
 type CementacionTapon = {
   tipo: "cementacion" | "squeeze" | "tampon_cemento" | "bpp";
   intervalo?: {
@@ -131,12 +136,17 @@ Devolvé SOLO JSON con:
     {
       "nombre": string|null,
       "numero": string|null,
+      "fecha": string|null,
       "intervalo": { "desde": number|null, "hasta": number|null, "unidad": string|null }|null,
       "fluidoRecuperado": string|null,
       "totalRecuperado": { "valor": number|null, "unidad": string|null }|null,
+      "recuperadoTexto": string|null,
       "vazao": string|null,
       "swab": string|null,
       "nivelFluido": string|null,
+      "salinidad": string|null,
+      "bsw": string|null,
+      "gradosAPI": string|null,
       "sopro": string|null,
       "observacion": string|null
     }
@@ -164,10 +174,19 @@ Devolvé SOLO JSON con:
 
 [Otras reglas]
 - Diferenciá RECUPERADO vs. VAZÃO (solo V/T: m3/d, bbl/d, BPD, MPCD, BPM, L/s, Qt=...).
+- En "fluidoRecuperado" listá TODOS los fluidos recuperados (p. ej., "óleo y agua", "gas y óleo").
+- En "recuperadoTexto" copiá/condensá la(s) oración(es) de recupero con números y unidades tal como aparecen (p. ej., "Recuperado 307 m de óleo (0,903 m3) y 9,0 m de água (0,014 m3)").
+- Para pruebas de inyectividad, completar "presion" si aparece (en psi), por ejemplo: "Coluna 200 psi; Anular 150 psi" o "pressão 600 psi".
+- NO confundir índices/pressión (Pe, IP, Np, presión estática, salinidad) con vazão. 
+- *Ej.: "IP = 0,126 m3/d/kg/cm2" NO es vazão → NO completar "vazao" con eso.*
+- En el resumen y campos de fluido, usar "óleo" (no "aceite").
+- Si hay “Salinidade/Salinidad = …”, “BSW = …”, “Óleo: xxºAPI”, extraelos a los campos "salinidad", "bsw" y "gradosAPI".
+- "fecha" del test puede ser la del bloque si no se explicita distinta.
+- No deduzcas "fluidoRecuperado" a partir de propiedades PVT como "Óleo: 29,8ºAPI", "Visc.:", o "Salinidade"; eso NO implica recuperación de fluido.
+- Si el texto indica resultado “seco” ("apresentou-se seco", "seco"), dejá "fluidoRecuperado": null y reflejalo en "observacion" (p.ej., "intervalo seco").
+- Si existe una línea que comience con "Obs.:" o "Observación:", incorporá su contenido en "observacion" del test más relevante; si además hay “seco” o “solo la zona X es productora”, añadilo también como justificación.
 - Resumen: "breve" 1–2 frases, "extendido" 3–6; incluir fecha/rango, prueba (TF-x/TFR-x/Teste), intervalo principal, y resultados clave (sopro/flow, presencia, llama, tiempos, recuperos, caudal, TCZ, minifractura/packers/reequipado).
-- Punzados: extraé rangos de canhoneo/perforado; si no hay, [].
-- **Normalizá typos de términos clave**: tratá "BBP" ≈ "BPP", "PCK" ≈ "PACKER" y "DUO LINE" ≈ "DUOLINE".
-- Si hay BPP (aunque el texto traiga “BBP”), el resumen DEBE mencionarlo explícitamente e incluir la profundidad si está disponible.
+- Punzados: extraé rangos de canhoneo/perforado; si no hay verbos/indicadores de canhoneo (canhoneado, punzado, perforado, tiros), devolver [].
 
 [Eventos que NO pueden faltar en el RESUMEN]
 Si aparecen en el texto, mencionarlos explícitamente:
@@ -183,6 +202,7 @@ Si aparecen en el texto, mencionarlos explícitamente:
 - Si se menciona “furo no/do revestimento” (agujero en revestimiento) sin relación a intervalos punzados, **no** lo listes en "cementaciones".
 - Para cementación/squeeze, completá "intervalo" como en tests (rango explícito o rango de zona).
 - Para BPP, usá "profundidad" (y "unidadProfundidad":"m"); "intervalo" queda null.
+- **No contar como cementación** las inyecciones de *pasta de cemento* usadas para **posicionar/assentar PACKERS** (p. ej. PACKER AD-1), salvo que el texto indique explícitamente una **squeeze de cementación sobre intervalos punzados**.
 
 [Ejemplo — BPP + squeeze en CPS-01]
 Entrada (resumida):
@@ -259,11 +279,13 @@ function normalizePunzados(arr: unknown): Punzado[] {
   return out;
 }
 
+// ——— normalizeEnsayos ———
 function normalizeEnsayos(arr: unknown): Ensayo[] {
   if (!Array.isArray(arr)) return [];
   return arr.map((raw) => {
     const nombre = typeof raw?.nombre === "string" ? raw.nombre : null;
     const numero = typeof raw?.numero === "string" ? raw.numero : null;
+    const fecha = typeof raw?.fecha === "string" ? raw.fecha : null;
 
     const intervaloRaw = raw?.intervalo ?? null;
     const intervalo =
@@ -293,23 +315,35 @@ function normalizeEnsayos(arr: unknown): Ensayo[] {
 
     const fluidoRecuperado =
       typeof raw?.fluidoRecuperado === "string" ? raw.fluidoRecuperado : null;
+    const recuperadoTexto =
+      typeof raw?.recuperadoTexto === "string" ? raw.recuperadoTexto : null;
     const vazao = typeof raw?.vazao === "string" ? raw.vazao : null;
     const swab = typeof raw?.swab === "string" ? raw.swab : null;
     const nivelFluido =
       typeof raw?.nivelFluido === "string" ? raw.nivelFluido : null;
+    const salinidad = typeof raw?.salinidad === "string" ? raw.salinidad : null;
+    const bsw = typeof raw?.bsw === "string" ? raw.bsw : null;
+    const gradosAPI = typeof raw?.gradosAPI === "string" ? raw.gradosAPI : null;
     const sopro = typeof raw?.sopro === "string" ? raw.sopro : null;
     const observacion =
       typeof raw?.observacion === "string" ? raw.observacion : null;
+    const presion = typeof raw?.presion === "string" ? raw.presion : null;
 
     return {
       nombre,
       numero,
+      fecha,
       intervalo,
       fluidoRecuperado,
       totalRecuperado,
+      recuperadoTexto,
       vazao,
       swab,
       nivelFluido,
+      salinidad,
+      bsw,
+      gradosAPI,
+      presion,
       sopro,
       observacion,
     };
@@ -561,6 +595,166 @@ function ensureBPPInResumen(resumen: string, text: string) {
   return trimmed + (needsDot ? "." : "") + clause;
 }
 
+function normalizeFluidTerms(s: string | null | undefined) {
+  if (!s) return s ?? null;
+  // aceite -> óleo (con posibles plurales)
+  return s.replace(/\baceites?\b/gi, "óleo");
+}
+
+function normalizeResumenTerms(s: string) {
+  // también normalizamos en el resumen
+  return normalizeFluidTerms(s) ?? s;
+}
+
+/** Si el string de 'vazao' contiene unidades “por presión” o menciona IP, lo descartamos */
+function sanitizeVazao(s: string | null | undefined): string | null {
+  if (!s) return null;
+  const txt = s.trim();
+
+  // indicadores de "por presión" o índice: m3/d/kg/cm2, kgf/cm2, "IP", etc.
+  if (
+    /\/\s*(kgf?\/?cm2)\b/i.test(txt) || // /kg/cm2 o /kgf/cm2
+    /\bkgf?\/?cm2\b/i.test(txt) || // kg/cm2 o kgf/cm2
+    /\bIP\b/i.test(txt) // menciona IP
+  ) {
+    return null;
+  }
+
+  // si no contiene unidad de V/T conocida, también lo descartamos
+  if (!/\b(m3\/d|bbl\/d|bpd|mpcd|bpm|l\/s|qt\s*=)/i.test(txt)) {
+    return null;
+  }
+
+  return txt;
+}
+
+/** ¿Hay palabras de canhoneo/punzado en el texto crudo? */
+function hasPunzadoKeywords(text: string) {
+  return /(canhone|punzad|perforad|tiros?)/i.test(text);
+}
+
+/** Si no hay keywords de punzado en el bloque, eliminamos "punzados" devueltos por el modelo */
+function filterPunzadosByKeywords(text: string, punzados: Punzado[]) {
+  if (!hasPunzadoKeywords(text)) return [];
+  return punzados;
+}
+
+function extractRecuperadoTextoFromBlock(text: string): string | null {
+  // ES/PT: Recuperado/Recuperados/Recuperou …
+  const re = /\b(Recuperad[oa]s?|Recuperou)\b[^.\n\r]*(?:\.[^\n\r]*)?/gi;
+  const m = text.match(re);
+  if (!m || m.length === 0) return null;
+  return m
+    .join(" ")
+    .replace(/[ \t]+/g, " ")
+    .trim();
+}
+
+function guessFluidoFromRecuperado(s: string | null): string | null {
+  if (!s) return null;
+  const hasOleo = /\b(óleo|oleo|petro(?:leo)?)\b/i.test(s);
+  const hasAgua = /\b(água|agua)\b/i.test(s);
+  const hasGas = /\b(g[aá]s|gas)\b/i.test(s);
+  const parts: string[] = [];
+  if (hasOleo) parts.push("óleo");
+  if (hasAgua) parts.push("agua");
+  if (hasGas) parts.push("gas");
+  return parts.length ? parts.join(" y ") : null;
+}
+
+/** Extrae la primera frase relacionada a sopro/fluxo del bloque completo */
+function extractSoproBlock(text: string): string | null {
+  // normalizamos saltos y mantenemos acentos
+  const norm = text.replace(/\r/g, "");
+
+  // 1) Arrancar en la primera mención de sopro/fluxo/surgência/surgió/surgiu (PT + ES)
+  const startRe =
+    /\b(sopro|fluxo|flujo|surg(?:iu|i[oó])|surg[êe]ncia|surgencia)\b/i;
+  const mStart = startRe.exec(norm);
+  if (!mStart) return null;
+  const startIdx = mStart.index;
+
+  // Trabajamos sobre el texto a partir del inicio detectado
+  const after = norm.slice(startIdx);
+
+  // 2) Candidatos de corte:
+  //    a) primera línea en blanco (fin de párrafo del sopro/fluxo)
+  const paraBreakRe = /\n\s*\n/;
+  const mPara = paraBreakRe.exec(after);
+
+  //    b) antes de métricas u otras secciones (Recuperado, Q, IP, Ke, Dano, Pe, Salinidad, BSW, API, Visc., Óleo…)
+  const stopRe =
+    /(Recuperad[oa]s?|Recuperou)\b|^[ \t]*(Q|Qt)\s*=|Vaz[ãa]o|^[ \t]*IP\s*=|^[ \t]*Ke\s*=|^[ \t]*Dano\s*=|^[ \t]*Pe\s*=|Salin|^Óleo\s*:|^Oleo\s*:|^Visc\.|^[ \t]*BSW\b|^[ \t]*Grau?s?\s*API\b/gim;
+  const mStop = stopRe.exec(after);
+
+  // 3) Tomar el corte más temprano entre (a) y (b)
+  let endRel = after.length;
+  if (mPara && mPara.index < endRel) endRel = mPara.index;
+  if (mStop && mStop.index < endRel) endRel = mStop.index;
+
+  const slice = after.slice(0, endRel);
+
+  // 4) Limpieza ligera
+  return slice
+    .replace(/[ \t]+/g, " ")
+    .replace(/\s*([.;])\s*/g, "$1 ")
+    .trim();
+}
+
+/** Garantiza el prefijo “Sopro: ” y limpia duplicados tipo “Sopro: sopro …” */
+function normalizeSoproLabel(s: string | null | undefined): string | null {
+  const v = (s ?? "").trim();
+  if (!v) return null;
+  const body = v.replace(/^sopro\b[:\s-]*/i, "").trim();
+  return body ? `Sopro: ${body}` : null;
+}
+
+function isInjectivityTest(t: Ensayo) {
+  const s = `${t.nombre ?? ""} ${t.observacion ?? ""}`.toLowerCase();
+  return /injetiv|inyectiv|injectiv|packer/.test(s);
+}
+
+function extractInjectivityPsi(text: string): string | null {
+  const norm = text.replace(/\r/g, " ").replace(/[ \t]+/g, " ");
+  // Cortamos en oraciones (punto, fin de línea o punto y coma)
+  const sentences = norm
+    .split(/(?<=[.!?])\s+|[\n;]+/g)
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  // Relevante sólo si menciona injetividade/inyectividad o vazão/BPM
+  const RELEVANT =
+    /(injetiv|inyectiv|injectiv|teste\s+de\s+injetiv|vaz[ãa]o|bpm)/i;
+
+  // Ruido/descartar: cementación/squeeze/tapón/BPP/assentado/injetado/isolamento
+  const NOISE =
+    /(ciment|pasta\s+de\s+cimento|squeeze|tap(?:[ãa]o|on)|\bBPP\b|assentad|injetad[oa]|isolament)/i;
+
+  const out: string[] = [];
+
+  for (const s of sentences) {
+    if (!/psi\b/i.test(s)) continue; // debe tener psi
+    if (!RELEVANT.test(s)) continue; // y ser frase de inyectividad/caudal
+    if (NOISE.test(s)) continue; // no cementación/aislamiento/etc.
+
+    // Extraer Coluna/Anular/Pressão ... psi dentro de la frase
+    let m: RegExpExecArray | null;
+
+    const reCol = /(colu(?:na|mn)a)[^.\n\r]{0,20}?(\d+[.,]?\d*)\s*psi/gi;
+    while ((m = reCol.exec(s))) out.push(`Coluna ${m[2]} psi`);
+
+    const reAnu = /(anular)[^.\n\r]{0,20}?(\d+[.,]?\d*)\s*psi/gi;
+    while ((m = reAnu.exec(s))) out.push(`Anular ${m[2]} psi`);
+
+    const rePrs = /press[aã]o[^.\n\r]{0,20}?(\d+[.,]?\d*)\s*psi/gi;
+    while ((m = rePrs.exec(s))) out.push(`Pressão ${m[1]} psi`);
+  }
+
+  // Quitar duplicados y unir
+  const uniq = Array.from(new Set(out));
+  return uniq.length ? uniq.join("; ") : null;
+}
+
 /* ==================== Core ==================== */
 
 async function summarizeOne(
@@ -607,12 +801,42 @@ async function summarizeOne(
   // Fallbacks con texto normalizado
   const normText = normalizeDomainTypos(item.text);
   tests = fillMissingIntervals(tests, normText);
+  const soproEnBloque = extractSoproBlock(normText);
+  tests = tests.map((t) => {
+    // 1) Traé la frase completa de “Recuperado …” si el modelo no la entregó
+    const recTxt =
+      t.recuperadoTexto ?? extractRecuperadoTextoFromBlock(normText) ?? null;
+
+    // 2) Si no vino fluido, inferilo a partir del texto de recupero (óleo/agua/gas)
+    const fluidFromRec = guessFluidoFromRecuperado(recTxt);
+    const fluido = normalizeFluidTerms(
+      t.fluidoRecuperado ?? fluidFromRec ?? null
+    );
+    const sopro = normalizeSoproLabel(t.sopro ?? soproEnBloque ?? null);
+    const presion =
+      t.presion ??
+      (isInjectivityTest(t) ? extractInjectivityPsi(normText) : null);
+
+    return {
+      ...t,
+      presion,
+      sopro,
+      fecha: t.fecha, // sin tocar
+      vazao: sanitizeVazao(t.vazao), // descarta IP/Pe/etc. si no es V/T válido
+      recuperadoTexto: recTxt, // prioriza la frase completa
+      fluidoRecuperado: fluido, // lista consolidada “óleo y agua”, etc.
+      observacion: normalizeFluidTerms(t.observacion),
+    };
+  });
   cementaciones = fillMissingCementIntervals(cementaciones, normText);
   cementaciones = filterCementacionesForPerforated(cementaciones, normText);
+  punzados = filterPunzadosByKeywords(normText, punzados);
 
   // Asegurar BPP en resumen si estaba en el texto
-  resumen = resumen.replace(/\s{2,}/g, " ").trim();
-  resumen = ensureBPPInResumen(resumen, normText);
+  resumen = normalizeResumenTerms(resumen)
+    .replace(/\s{2,}/g, " ")
+    .trim(); // "aceite" -> "óleo"
+  resumen = ensureBPPInResumen(resumen, normText); // fuerza mención de BPP si apareció en el texto
 
   return { resumen, punzados, tests, cementaciones };
 }

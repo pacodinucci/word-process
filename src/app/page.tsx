@@ -5,12 +5,6 @@ import { WordDropzone } from "@/components/global/word-dropzone";
 import { ResponsiveDialog } from "@/components/global/responsive-dialog";
 import { getErrorMessage } from "@/lib/utils";
 
-// type Intervalo = {
-//   desde?: number | null;
-//   hasta?: number | null;
-//   unidad?: string | null;
-// } | null;
-
 // Para el diálogo (resumen)
 type Punzado = {
   desde?: number | null;
@@ -21,6 +15,7 @@ type Punzado = {
 type Ensayo = {
   nombre?: string | null;
   numero?: string | null;
+  fecha?: string | null;
   intervalo?: {
     desde?: number | null;
     hasta?: number | null;
@@ -28,10 +23,15 @@ type Ensayo = {
   } | null;
   fluidoRecuperado?: string | null;
   totalRecuperado?: { valor?: number | null; unidad?: string | null } | null;
+  recuperadoTexto?: string | null;
   vazao?: string | null;
   swab?: string | null;
   nivelFluido?: string | null;
+  salinidad?: string | null;
+  bsw?: string | null;
+  gradosAPI?: string | null;
   sopro?: string | null;
+  presion?: string | null;
   observacion?: string | null;
 };
 
@@ -48,35 +48,6 @@ type CementacionTapon = {
   observacion?: string | null;
 };
 
-// type Intervencion = {
-//   tipo: "ensayo" | "punzado" | "estimulacion" | "cementacion";
-//   fechaISO?: string | null;
-//   fechaTexto?: string | null;
-//   numeroEnsayo?: string | null;
-//   intervalo?: Intervalo;
-//   fluidoRecuperado?: string | null;
-//   fluidoRecuperadoClasificacion?:
-//     | "oleo"
-//     | "agua"
-//     | "gas"
-//     | "oleo_y_agua"
-//     | "agua_y_oleo"
-//     | "oleo_y_gas"
-//     | "gas_y_oleo"
-//     | "agua_y_gas"
-//     | "gas_y_agua"
-//     | "no_especificado"
-//     | null;
-//   totalRecuperado?: { valor?: number | null; unidad?: string | null } | null;
-//   totalRecuperadoTexto?: string | null;
-//   intervalosPunzado?: {
-//     desde?: number | null;
-//     hasta?: number | null;
-//     unidad?: string | null;
-//   }[];
-//   observaciones?: string | null;
-// };
-
 // Crudo que devuelve /api/word/interventions
 type RawIntervencion = {
   index: number;
@@ -84,6 +55,28 @@ type RawIntervencion = {
   fechaTexto: string | null;
   text: string;
 };
+
+/** Helpers de UI para “Recuperado” (sopro + recuperado) */
+function ensureEndsWithDot(s: string) {
+  const t = s?.trim?.() ?? "";
+  if (!t) return "";
+  return /[.!?]$/.test(t) ? t : t + ".";
+}
+function mkRecuperadoLinea(t: Ensayo) {
+  const parts: string[] = [];
+  if (t.sopro) parts.push(ensureEndsWithDot(t.sopro));
+  if (t.recuperadoTexto) {
+    parts.push(ensureEndsWithDot(t.recuperadoTexto));
+  } else if (t.totalRecuperado?.valor != null || t.totalRecuperado?.unidad) {
+    const num = t.totalRecuperado?.valor ?? "";
+    const uni = t.totalRecuperado?.unidad ?? "";
+    parts.push(ensureEndsWithDot(`Recuperado ${num} ${uni}`.trim()));
+  }
+  return parts
+    .join(" ")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
 
 export default function Home() {
   const [loading, setLoading] = useState(false);
@@ -148,7 +141,7 @@ export default function Home() {
     setSummaryError(null);
     setDialogOpen(true);
 
-    if (summaryByIndex[idx]) return; // ya tenemos cacheado
+    if (summaryByIndex[idx]) return; // cache
 
     const item = rawIntervenciones.find((x) => x.index === idx);
     if (!item) return;
@@ -376,48 +369,59 @@ export default function Home() {
                                 </span>
                               )}
                             </div>
-                            <ul className="mt-2 text-sm space-y-1">
-                              {t.fluidoRecuperado && (
-                                <li>
-                                  <strong>Fluido:</strong> {t.fluidoRecuperado}
-                                </li>
-                              )}
-                              {t.totalRecuperado &&
-                                (t.totalRecuperado.valor != null ||
-                                  t.totalRecuperado.unidad) && (
-                                  <li>
-                                    <strong>Total recuperado:</strong>{" "}
-                                    {t.totalRecuperado.valor ?? ""}{" "}
-                                    {t.totalRecuperado.unidad ?? ""}
-                                  </li>
-                                )}
-                              {t.vazao && (
-                                <li>
-                                  <strong>Vazão:</strong> {t.vazao}
-                                </li>
-                              )}
-                              {t.swab && (
-                                <li>
-                                  <strong>Swab:</strong> {t.swab}
-                                </li>
-                              )}
-                              {t.nivelFluido && (
-                                <li>
-                                  <strong>Nivel de fluido:</strong>{" "}
-                                  {t.nivelFluido}
-                                </li>
-                              )}
-                              {t.sopro && (
-                                <li>
-                                  <strong>Sopro:</strong> {t.sopro}
-                                </li>
-                              )}
-                              {t.observacion && (
-                                <li className="text-neutral-700">
-                                  <strong>Obs. ensayo:</strong> {t.observacion}
-                                </li>
-                              )}
-                            </ul>
+
+                            {/* Tabla de propiedades: SIEMPRE visibles */}
+                            <div className="mt-2 grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-1 text-sm">
+                              <div>
+                                <strong>Fecha:</strong> {t.fecha ?? ""}
+                              </div>
+                              <div>
+                                <strong>Intervalo:</strong>{" "}
+                                {t.intervalo ? fmtIntervalo(t.intervalo) : ""}
+                              </div>
+                              <div>
+                                <strong>Nº test:</strong>{" "}
+                                {t.nombre ?? t.numero ?? ""}
+                              </div>
+
+                              <div>
+                                <strong>Resultado (fluido):</strong>{" "}
+                                {t.fluidoRecuperado ?? ""}
+                              </div>
+                              <div>
+                                <strong>Nivel:</strong> {t.nivelFluido ?? ""}
+                              </div>
+                              <div>
+                                <strong>Swab:</strong> {t.swab ?? ""}
+                              </div>
+
+                              <div>
+                                <strong>Vazão:</strong> {t.vazao ?? ""}
+                              </div>
+                              <div>
+                                <strong>Salinidad:</strong> {t.salinidad ?? ""}
+                              </div>
+                              <div>
+                                <strong>BSW:</strong> {t.bsw ?? ""}
+                              </div>
+
+                              <div>
+                                <strong>Presión:</strong> {t.presion ?? ""}{" "}
+                              </div>
+
+                              <div>
+                                <strong>Grados API:</strong> {t.gradosAPI ?? ""}
+                              </div>
+                              <div className="col-span-2">
+                                <strong>Observaciones:</strong>{" "}
+                                {t.observacion ?? ""}
+                              </div>
+
+                              <div className="col-span-2">
+                                <strong>Recuperado:</strong>{" "}
+                                {mkRecuperadoLinea(t) || ""}
+                              </div>
+                            </div>
                           </div>
                         ))}
                       </div>
@@ -442,7 +446,6 @@ export default function Home() {
                                   {c.zona}
                                 </span>
                               )}
-                              {/* a la derecha: intervalo o profundidad */}
                               <span className="text-xs text-neutral-600 ml-auto">
                                 {c.intervalo
                                   ? `Intervalo: ${fmtIntervalo(c.intervalo)}`
