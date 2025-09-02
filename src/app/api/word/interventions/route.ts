@@ -250,10 +250,9 @@ export async function POST(req: Request) {
       count: interventions.length,
       interventions,
     });
-  } catch (e: any) {
-    return NextResponse.json(
-      { ok: false, error: e?.message ?? "Error" },
-      { status: 500 }
-    );
+  } catch (e: unknown) {
+    const message = e instanceof Error ? e.message : "Error inesperado";
+
+    return NextResponse.json({ ok: false, error: message }, { status: 500 });
   }
 }

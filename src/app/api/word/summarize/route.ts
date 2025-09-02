@@ -238,7 +238,7 @@ function toNum(v: unknown): number | null {
   return null;
 }
 
-function normalizePunzados(arr: any): Punzado[] {
+function normalizePunzados(arr: unknown): Punzado[] {
   if (!Array.isArray(arr)) return [];
   const out: Punzado[] = [];
   for (const it of arr) {
@@ -259,7 +259,7 @@ function normalizePunzados(arr: any): Punzado[] {
   return out;
 }
 
-function normalizeEnsayos(arr: any): Ensayo[] {
+function normalizeEnsayos(arr: unknown): Ensayo[] {
   if (!Array.isArray(arr)) return [];
   return arr.map((raw) => {
     const nombre = typeof raw?.nombre === "string" ? raw.nombre : null;
@@ -317,7 +317,7 @@ function normalizeEnsayos(arr: any): Ensayo[] {
 }
 
 /** Normaliza cementaciones/tampones */
-function normalizeCementaciones(arr: any): CementacionTapon[] {
+function normalizeCementaciones(arr: unknown): CementacionTapon[] {
   if (!Array.isArray(arr)) return [];
   return arr.map((raw) => {
     const tipoRaw =
@@ -663,10 +663,9 @@ export async function POST(req: Request) {
     }
 
     return NextResponse.json({ ok: true, summaries });
-  } catch (e: any) {
-    return NextResponse.json(
-      { ok: false, error: e?.message ?? "Error" },
-      { status: 500 }
-    );
+  } catch (e: unknown) {
+    const message = e instanceof Error ? e.message : "Error inesperado";
+
+    return NextResponse.json({ ok: false, error: message }, { status: 500 });
   }
 }

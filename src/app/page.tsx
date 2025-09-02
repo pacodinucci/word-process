@@ -3,12 +3,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { WordDropzone } from "@/components/global/word-dropzone";
 import { ResponsiveDialog } from "@/components/global/responsive-dialog";
+import { getErrorMessage } from "@/lib/utils";
 
-type Intervalo = {
-  desde?: number | null;
-  hasta?: number | null;
-  unidad?: string | null;
-} | null;
+// type Intervalo = {
+//   desde?: number | null;
+//   hasta?: number | null;
+//   unidad?: string | null;
+// } | null;
 
 // Para el diálogo (resumen)
 type Punzado = {
@@ -47,34 +48,34 @@ type CementacionTapon = {
   observacion?: string | null;
 };
 
-type Intervencion = {
-  tipo: "ensayo" | "punzado" | "estimulacion" | "cementacion";
-  fechaISO?: string | null;
-  fechaTexto?: string | null;
-  numeroEnsayo?: string | null;
-  intervalo?: Intervalo;
-  fluidoRecuperado?: string | null;
-  fluidoRecuperadoClasificacion?:
-    | "oleo"
-    | "agua"
-    | "gas"
-    | "oleo_y_agua"
-    | "agua_y_oleo"
-    | "oleo_y_gas"
-    | "gas_y_oleo"
-    | "agua_y_gas"
-    | "gas_y_agua"
-    | "no_especificado"
-    | null;
-  totalRecuperado?: { valor?: number | null; unidad?: string | null } | null;
-  totalRecuperadoTexto?: string | null;
-  intervalosPunzado?: {
-    desde?: number | null;
-    hasta?: number | null;
-    unidad?: string | null;
-  }[];
-  observaciones?: string | null;
-};
+// type Intervencion = {
+//   tipo: "ensayo" | "punzado" | "estimulacion" | "cementacion";
+//   fechaISO?: string | null;
+//   fechaTexto?: string | null;
+//   numeroEnsayo?: string | null;
+//   intervalo?: Intervalo;
+//   fluidoRecuperado?: string | null;
+//   fluidoRecuperadoClasificacion?:
+//     | "oleo"
+//     | "agua"
+//     | "gas"
+//     | "oleo_y_agua"
+//     | "agua_y_oleo"
+//     | "oleo_y_gas"
+//     | "gas_y_oleo"
+//     | "agua_y_gas"
+//     | "gas_y_agua"
+//     | "no_especificado"
+//     | null;
+//   totalRecuperado?: { valor?: number | null; unidad?: string | null } | null;
+//   totalRecuperadoTexto?: string | null;
+//   intervalosPunzado?: {
+//     desde?: number | null;
+//     hasta?: number | null;
+//     unidad?: string | null;
+//   }[];
+//   observaciones?: string | null;
+// };
 
 // Crudo que devuelve /api/word/interventions
 type RawIntervencion = {
@@ -134,8 +135,8 @@ export default function Home() {
       if (!res.ok || !data?.ok)
         throw new Error(data?.error ?? `HTTP ${res.status}`);
       setRawIntervenciones(data.interventions ?? []);
-    } catch (e: any) {
-      setErrorGeneral(e?.message ?? "Error");
+    } catch (e: unknown) {
+      setErrorGeneral(getErrorMessage(e));
     } finally {
       setLoading(false);
     }
@@ -177,8 +178,8 @@ export default function Home() {
         ...p,
         [idx]: Array.isArray(s?.cementaciones) ? s.cementaciones : [],
       }));
-    } catch (e: any) {
-      setSummaryError(e?.message ?? "Error al resumir");
+    } catch (e: unknown) {
+      setSummaryError(getErrorMessage(e));
     } finally {
       setSummarizing(false);
     }
@@ -188,19 +189,23 @@ export default function Home() {
   async function reanalizarActual() {
     if (selectedIndex == null) return;
     setSummaryByIndex((p) => {
-      const { [selectedIndex]: _, ...rest } = p;
+      const { [selectedIndex]: unused, ...rest } = p;
+      void unused;
       return rest;
     });
     setPunzadosByIndex((p) => {
-      const { [selectedIndex]: _, ...rest } = p;
+      const { [selectedIndex]: unused, ...rest } = p;
+      void unused;
       return rest;
     });
     setTestsByIndex((p) => {
-      const { [selectedIndex]: _, ...rest } = p;
+      const { [selectedIndex]: unused, ...rest } = p;
+      void unused;
       return rest;
     });
     setCementacionesByIndex((p) => {
-      const { [selectedIndex]: _, ...rest } = p;
+      const { [selectedIndex]: unused, ...rest } = p;
+      void unused;
       return rest;
     });
     await abrirYAnalizar(selectedIndex);

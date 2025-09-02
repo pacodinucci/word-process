@@ -5,6 +5,7 @@ import React, { useCallback, useState } from "react";
 import { useDropzone } from "react-dropzone";
 import { Loader2 } from "lucide-react";
 import * as mammoth from "mammoth";
+import { getErrorMessage } from "@/lib/utils";
 
 type Props = {
   /** Si se provee, NO se parsea en el cliente y se llama directo con el File */
@@ -53,9 +54,9 @@ export const WordDropzone: React.FC<Props> = ({
         const { value: text } = await mammoth.extractRawText({ arrayBuffer });
 
         await onFileProcessed({ html, text, file });
-      } catch (e: any) {
+      } catch (e: unknown) {
         console.error("[WordDropzone] error:", e);
-        setError(e?.message ?? "Error procesando el archivo.");
+        setError(getErrorMessage(e));
       }
     },
     [onPickFile, onFileProcessed]
