@@ -172,6 +172,19 @@ Devolvé SOLO JSON con:
   4) Si el bloque tiene un único "Int. a/b m" principal, podés usarlo cuando el test no provee otro mejor.
   5) No dejes "intervalo": null.
 
+  [Ejemplos de SOPRO/FLUXO]  // <-- NUEVO
+    Entrada: "Sopro moderado passando a forte. Gás na superfície aos 15 min 1º fluxo."
+    "sopro": "Sopro moderado passando a forte. Gás na superfície aos 15 min 1º fluxo."
+
+    Entrada: "Sopro forte imediato com gás na superfície aos 10 min. Surgiu gás/óleo aos 25 min de fluxo, com pouco óleo."
+    "sopro": "Sopro forte imediato com gás na superfície aos 10 min. Surgiu gás/óleo aos 25 min de fluxo, com pouco óleo."
+
+    Entrada: "Sopro moderado."
+    "sopro": "Sopro moderado."
+
+    Entrada: (sin mención a sopro/fluxo/surgência)
+    "sopro": null
+
 [Otras reglas]
 - Diferenciá RECUPERADO vs. VAZÃO (solo V/T: m3/d, bbl/d, BPD, MPCD, BPM, L/s, Qt=...).
 - En "fluidoRecuperado" listá TODOS los fluidos recuperados (p. ej., "óleo y agua", "gas y óleo").
@@ -281,6 +294,7 @@ function normalizePunzados(arr: unknown): Punzado[] {
 
 // ——— normalizeEnsayos ———
 function normalizeEnsayos(arr: unknown): Ensayo[] {
+  console.log("NORMALIZE ENSAYOS -> ", arr);
   if (!Array.isArray(arr)) return [];
   return arr.map((raw) => {
     const nombre = typeof raw?.nombre === "string" ? raw.nombre : null;
@@ -684,7 +698,7 @@ function extractSoproBlock(text: string): string | null {
 
   //    b) antes de métricas u otras secciones (Recuperado, Q, IP, Ke, Dano, Pe, Salinidad, BSW, API, Visc., Óleo…)
   const stopRe =
-    /(Recuperad[oa]s?|Recuperou)\b|^[ \t]*(Q|Qt)\s*=|Vaz[ãa]o|^[ \t]*IP\s*=|^[ \t]*Ke\s*=|^[ \t]*Dano\s*=|^[ \t]*Pe\s*=|Salin|^Óleo\s*:|^Oleo\s*:|^Visc\.|^[ \t]*BSW\b|^[ \t]*Grau?s?\s*API\b/gim;
+    /(Recuperad[oa]s?|Recuperou|Recuperado)\b|^[ \t]*(Q|Qt)\s*=|Vaz[ãa]o|^[ \t]*IP\s*=|^[ \t]*Ke\s*=|^[ \t]*Dano\s*=|^[ \t]*Pe\s*=|Salin|^Óleo\s*:|^Oleo\s*:|^Visc\.|^[ \t]*BSW\b|^[ \t]*Grau?s?\s*API\b/gim;
   const mStop = stopRe.exec(after);
 
   // 3) Tomar el corte más temprano entre (a) y (b)
