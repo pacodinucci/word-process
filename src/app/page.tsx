@@ -56,6 +56,23 @@ type RawIntervencion = {
   text: string;
 };
 
+type Estimulacion = {
+  tipo: "acidizacion" | "fractura" | "minifractura";
+  fecha?: string | null;
+  intervalo?: {
+    desde?: number | null;
+    hasta?: number | null;
+    unidad?: string | null;
+  } | null;
+  fluido?: string | null;
+  presionInicial?: string | null;
+  presionMedia?: string | null;
+  presionFinal?: string | null;
+  vazao?: string | null;
+  volumen?: { valor?: number | null; unidad?: string | null } | null;
+  observacion?: string | null;
+};
+
 /** Helpers de UI para “Recuperado” (sopro + recuperado) */
 function ensureEndsWithDot(s: string) {
   const t = s?.trim?.() ?? "";
@@ -70,13 +87,30 @@ function mkRecuperadoLinea(t: Ensayo) {
   } else if (t.totalRecuperado?.valor != null || t.totalRecuperado?.unidad) {
     const num = t.totalRecuperado?.valor ?? "";
     const uni = t.totalRecuperado?.unidad ?? "";
-    parts.push(ensureEndsWithDot(`Recuperado ${num} ${uni}`.trim()));
+    const recTxt = t.recuperadoTexto ?? "";
+    parts.push(
+      ensureEndsWithDot(`${recTxt} Total Recuperado ${num} ${uni}`.trim())
+    );
   }
   return parts
     .join(" ")
     .replace(/\s{2,}/g, " ")
     .trim();
 }
+
+const fmtVolumen = (
+  v?: { valor?: number | null; unidad?: string | null } | null
+) =>
+  v && (v.valor != null || v.unidad)
+    ? `${v.valor ?? ""} ${v.unidad ?? ""}`
+    : null;
+
+const labelTipoEst = (t: Estimulacion["tipo"]) =>
+  t === "acidizacion"
+    ? "Acidización"
+    : t === "fractura"
+    ? "Fractura"
+    : "Minifractura";
 
 export default function Home() {
   const [loading, setLoading] = useState(false);
@@ -99,6 +133,9 @@ export default function Home() {
   const [cementacionesByIndex, setCementacionesByIndex] = useState<
     Record<number, CementacionTapon[] | undefined>
   >({});
+  const [estimulacionesByIndex, setEstimulacionesByIndex] = useState<
+    Record<number, Estimulacion[] | undefined>
+  >({});
 
   const [summarizing, setSummarizing] = useState(false);
   const [summaryError, setSummaryError] = useState<string | null>(null);
@@ -115,6 +152,7 @@ export default function Home() {
     setPunzadosByIndex({});
     setTestsByIndex({});
     setCementacionesByIndex({});
+    setEstimulacionesByIndex({});
     setDialogOpen(false);
     setSelectedIndex(null);
     try {
@@ -171,6 +209,10 @@ export default function Home() {
         ...p,
         [idx]: Array.isArray(s?.cementaciones) ? s.cementaciones : [],
       }));
+      setEstimulacionesByIndex((p) => ({
+        ...p,
+        [idx]: Array.isArray(s?.estimulaciones) ? s.estimulaciones : [],
+      }));
     } catch (e: unknown) {
       setSummaryError(getErrorMessage(e));
     } finally {
@@ -197,6 +239,11 @@ export default function Home() {
       return rest;
     });
     setCementacionesByIndex((p) => {
+      const { [selectedIndex]: unused, ...rest } = p;
+      void unused;
+      return rest;
+    });
+    setEstimulacionesByIndex((p) => {
       const { [selectedIndex]: unused, ...rest } = p;
       void unused;
       return rest;
@@ -243,6 +290,7 @@ export default function Home() {
       punzadosByIndex,
       testsByIndex,
       cementacionesByIndex,
+      estimulacionesByIndex,
       selectedIndex,
       dialogOpen,
     });
@@ -252,6 +300,7 @@ export default function Home() {
     punzadosByIndex,
     testsByIndex,
     cementacionesByIndex,
+    estimulacionesByIndex,
     selectedIndex,
     dialogOpen,
   ]);
@@ -468,6 +517,65 @@ export default function Home() {
                     </div>
                   )}
                 </>
+              )}
+
+              {/* Estimulaciones */}
+              {(estimulacionesByIndex[selectedIndex]?.length ?? 0) > 0 && (
+                <div className="mt-3 border-t pt-3">
+                  <h3 className="text-sm font-medium mb-2">Estimulación</h3>
+                  <div className="grid gap-3">
+                    {estimulacionesByIndex[selectedIndex]!.map((e, i) => (
+                      <div key={i} className="rounded-lg border p-3">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs uppercase tracking-wide px-2 py-0.5 rounded-full bg-neutral-100">
+                            {labelTipoEst(e.tipo)}
+                          </span>
+                          {e.intervalo && (
+                            <span className="text-xs text-neutral-600 ml-auto">
+                              {fmtIntervalo(e.intervalo)}
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="mt-2 grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-1 text-sm">
+                          <div>
+                            <strong>Fecha:</strong> {e.fecha ?? ""}
+                          </div>
+                          <div>
+                            <strong>Intervalo:</strong>{" "}
+                            {e.intervalo ? fmtIntervalo(e.intervalo) : ""}
+                          </div>
+                          <div>
+                            <strong>Fluido:</strong> {e.fluido ?? ""}
+                          </div>
+
+                          <div>
+                            <strong>Vazão:</strong> {e.vazao ?? ""}
+                          </div>
+                          <div>
+                            <strong>Pi:</strong> {e.presionInicial ?? ""}
+                          </div>
+                          <div>
+                            <strong>Pm:</strong> {e.presionMedia ?? ""}
+                          </div>
+
+                          <div>
+                            <strong>Pf:</strong> {e.presionFinal ?? ""}
+                          </div>
+                          <div className="sm:col-span-2">
+                            <strong>Volumen:</strong>{" "}
+                            {fmtVolumen(e.volumen) ?? ""}
+                          </div>
+
+                          <div className="col-span-2">
+                            <strong>Observaciones:</strong>{" "}
+                            {e.observacion ?? ""}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
               )}
 
               <div className="pt-2 flex gap-2">

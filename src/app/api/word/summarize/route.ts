@@ -1,4 +1,7 @@
 // app/api/word/summarize/route.ts
+import { sanitizeVazao, toNum } from "@/lib/helpers";
+import { normalizeEstimulaciones } from "@/lib/helpers/estimulaciones";
+import { fewShot } from "@/lib/prompts";
 import { NextResponse } from "next/server";
 import OpenAI from "openai";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions";
@@ -52,6 +55,23 @@ type CementacionTapon = {
   profundidad?: number | null; // para BPP (punto único)
   unidadProfundidad?: string | null; // "m" por defecto si hay profundidad
   zona?: string | null; // CPS-01, etc., si aplica
+  observacion?: string | null;
+};
+
+export type Estimulacion = {
+  tipo: "acidizacion" | "fractura" | "minifractura";
+  fecha: string;
+  intervalo: {
+    desde: number | null;
+    hasta: number | null;
+    unidad: string | null;
+  };
+  fluido?: string | null;
+  presionInicial?: string | null;
+  presionMedia?: string | null;
+  presionFinal?: string | null;
+  vazao?: string | null;
+  volumen?: { valor: number | null; unidad: string | null } | null;
   observacion?: string | null;
 };
 
@@ -126,114 +146,6 @@ function buildMessages(
   item: RawIntervencion,
   mode: Exclude<DetailMode, "auto">
 ): ChatCompletionMessageParam[] {
-  const fewShot = `
-[Objetivo]
-Devolvé SOLO JSON con:
-{
-  "resumen": string,
-  "punzados": [ { "desde": number|null, "hasta": number|null, "unidad": "m"|string|null } ],
-  "tests": [
-    {
-      "nombre": string|null,
-      "numero": string|null,
-      "fecha": string|null,
-      "intervalo": { "desde": number|null, "hasta": number|null, "unidad": string|null }|null,
-      "fluidoRecuperado": string|null,
-      "totalRecuperado": { "valor": number|null, "unidad": string|null }|null,
-      "recuperadoTexto": string|null,
-      "vazao": string|null,
-      "swab": string|null,
-      "nivelFluido": string|null,
-      "salinidad": string|null,
-      "bsw": string|null,
-      "gradosAPI": string|null,
-      "sopro": string|null,
-      "observacion": string|null
-    }
-  ],
-  "cementaciones": [
-    {
-      "tipo": "cementacion" | "squeeze" | "tampon_cemento" | "bpp",
-      "intervalo": { "desde": number|null, "hasta": number|null, "unidad": string|null }|null,
-      "profundidad": number|null,
-      "unidadProfundidad": string|null,
-      "zona": string|null,
-      "observacion": string|null
-    }
-  ]
-}
-
-[Reglas CLAVE sobre INTERVALOS en tests]
-- El campo "intervalo" debe estar SIEMPRE presente en cada test:
-  1) Si hay rango explícito (p.ej., "Int. 589,77/605,0 m", "CPS-01 (561,0–568,0 m)"), usalo.
-  2) Si hay una profundidad puntual relevante (p.ej., "PACKER a 637,50 m", "swabbing a 592,0 m"), usala como punto único:
-     {"desde": 637,5, "hasta": 637,5, "unidad": "m"}.
-  3) Si el test refiere una zona (CPS-01, CPS-03/04, SERRARIA, etc.) y existe un rango de esa zona en el texto, usá ese rango.
-  4) Si el bloque tiene un único "Int. a/b m" principal, podés usarlo cuando el test no provee otro mejor.
-  5) No dejes "intervalo": null.
-
-  [Ejemplos de SOPRO/FLUXO]  // <-- NUEVO
-    Entrada: "Sopro moderado passando a forte. Gás na superfície aos 15 min 1º fluxo."
-    "sopro": "Sopro moderado passando a forte. Gás na superfície aos 15 min 1º fluxo."
-
-    Entrada: "Sopro forte imediato com gás na superfície aos 10 min. Surgiu gás/óleo aos 25 min de fluxo, com pouco óleo."
-    "sopro": "Sopro forte imediato com gás na superfície aos 10 min. Surgiu gás/óleo aos 25 min de fluxo, com pouco óleo."
-
-    Entrada: "Sopro moderado."
-    "sopro": "Sopro moderado."
-
-    Entrada: (sin mención a sopro/fluxo/surgência)
-    "sopro": null
-
-[Otras reglas]
-- Diferenciá RECUPERADO vs. VAZÃO (solo V/T: m3/d, bbl/d, BPD, MPCD, BPM, L/s, Qt=...).
-- En "fluidoRecuperado" listá TODOS los fluidos recuperados (p. ej., "óleo y agua", "gas y óleo").
-- En "recuperadoTexto" copiá/condensá la(s) oración(es) de recupero con números y unidades tal como aparecen (p. ej., "Recuperado 307 m de óleo (0,903 m3) y 9,0 m de água (0,014 m3)").
-- Para pruebas de inyectividad, completar "presion" si aparece (en psi), por ejemplo: "Coluna 200 psi; Anular 150 psi" o "pressão 600 psi".
-- NO confundir índices/pressión (Pe, IP, Np, presión estática, salinidad) con vazão. 
-- *Ej.: "IP = 0,126 m3/d/kg/cm2" NO es vazão → NO completar "vazao" con eso.*
-- En el resumen y campos de fluido, usar "óleo" (no "aceite").
-- Si hay “Salinidade/Salinidad = …”, “BSW = …”, “Óleo: xxºAPI”, extraelos a los campos "salinidad", "bsw" y "gradosAPI".
-- "fecha" del test puede ser la del bloque si no se explicita distinta.
-- No deduzcas "fluidoRecuperado" a partir de propiedades PVT como "Óleo: 29,8ºAPI", "Visc.:", o "Salinidade"; eso NO implica recuperación de fluido.
-- Si el texto indica resultado “seco” ("apresentou-se seco", "seco"), dejá "fluidoRecuperado": null y reflejalo en "observacion" (p.ej., "intervalo seco").
-- Si existe una línea que comience con "Obs.:" o "Observación:", incorporá su contenido en "observacion" del test más relevante; si además hay “seco” o “solo la zona X es productora”, añadilo también como justificación.
-- Resumen: "breve" 1–2 frases, "extendido" 3–6; incluir fecha/rango, prueba (TF-x/TFR-x/Teste), intervalo principal, y resultados clave (sopro/flow, presencia, llama, tiempos, recuperos, caudal, TCZ, minifractura/packers/reequipado).
-- Punzados: extraé rangos de canhoneo/perforado; si no hay verbos/indicadores de canhoneo (canhoneado, punzado, perforado, tiros), devolver [].
-
-[Eventos que NO pueden faltar en el RESUMEN]
-Si aparecen en el texto, mencionarlos explícitamente:
-- **Punzados** (canhoneo/perforado).
-- **Ensayos** (TF/TFR/DST, Teste de Avaliação, inyectividad, swab). **Excluir** ensayos de presión (sonolog, presión estática, “registro de presión”, Pcab, buildup/falloff).
-- **Cementaciones y/o BPP** (squeeze/cimentación, corrección de cimentación, tapones, BPP).
-- **Estimulación** (minifractura, acidización, tratamientos químicos).
-
-[Reglas de CEMENTACIONES/TAMPONES]
-- Incluir en "cementaciones" solo:
-  * **Cementación/Squeeze/Tampón de cemento** cuando estén **sobre intervalos punzados** (con intervalo claro o zona con rango).
-  * **BPP** (tampón mecánico): incluir siempre; usar **profundidad** (punto) si se informa.
-- Si se menciona “furo no/do revestimento” (agujero en revestimiento) sin relación a intervalos punzados, **no** lo listes en "cementaciones".
-- Para cementación/squeeze, completá "intervalo" como en tests (rango explícito o rango de zona).
-- Para BPP, usá "profundidad" (y "unidadProfundidad":"m"); "intervalo" queda null.
-- **No contar como cementación** las inyecciones de *pasta de cemento* usadas para **posicionar/assentar PACKERS** (p. ej. PACKER AD-1), salvo que el texto indique explícitamente una **squeeze de cementación sobre intervalos punzados**.
-
-[Ejemplo — BPP + squeeze en CPS-01]
-Entrada (resumida):
-... Isolado a zona SERRARIA com BPP fixado a 639,0 m ...
-... Correção de cimentação/ squeeze na CPS-01 (561,0–568,0 m) ...
-
-Salida (ejemplo):
-{
-  "resumen":"... se aisló SERRARIA con BPP a 639 m y se efectuó squeeze en CPS-01 (561,0–568,0 m) ...",
-  "punzados":[],
-  "tests":[],
-  "cementaciones":[
-    { "tipo":"bpp", "intervalo":null, "profundidad":639.0, "unidadProfundidad":"m", "zona":"SERRARIA", "observacion":"Aislamiento con BPP." },
-    { "tipo":"squeeze", "intervalo":{"desde":561.0,"hasta":568.0,"unidad":"m"}, "profundidad":null, "unidadProfundidad":null, "zona":"CPS-01", "observacion":"Squeeze sobre intervalos punzados." }
-  ]
-}
-`.trim();
-
   const fechaPreferida = item.fechaTexto?.trim() || item.fechaISO?.trim() || "";
   const style =
     mode === "extendido"
@@ -261,16 +173,6 @@ Salida (ejemplo):
 
 /* ==================== Normalización y fallbacks ==================== */
 
-function toNum(v: unknown): number | null {
-  if (typeof v === "number" && Number.isFinite(v)) return v;
-  if (typeof v === "string") {
-    const s = v.replace(/\s/g, "").replace(",", ".");
-    const n = parseFloat(s);
-    return Number.isFinite(n) ? n : null;
-  }
-  return null;
-}
-
 function normalizePunzados(arr: unknown): Punzado[] {
   if (!Array.isArray(arr)) return [];
   const out: Punzado[] = [];
@@ -294,7 +196,6 @@ function normalizePunzados(arr: unknown): Punzado[] {
 
 // ——— normalizeEnsayos ———
 function normalizeEnsayos(arr: unknown): Ensayo[] {
-  console.log("NORMALIZE ENSAYOS -> ", arr);
   if (!Array.isArray(arr)) return [];
   return arr.map((raw) => {
     const nombre = typeof raw?.nombre === "string" ? raw.nombre : null;
@@ -485,7 +386,7 @@ function fillMissingIntervals(tests: Ensayo[], text: string): Ensayo[] {
     }
 
     // 2) Si es inyectividad / packer y hay profundidad PACKER
-    const looksInjectivity = /INYE|INJETIV|PACKER|PCK/i.test(nameObs);
+    const looksInjectivity = /INYE|INJETIV/i.test(nameObs);
     if (looksInjectivity && packerDepths.length > 0) {
       const d = packerDepths[0];
       return { ...t, intervalo: { desde: d, hasta: d, unidad: "m" } };
@@ -620,28 +521,6 @@ function normalizeResumenTerms(s: string) {
   return normalizeFluidTerms(s) ?? s;
 }
 
-/** Si el string de 'vazao' contiene unidades “por presión” o menciona IP, lo descartamos */
-function sanitizeVazao(s: string | null | undefined): string | null {
-  if (!s) return null;
-  const txt = s.trim();
-
-  // indicadores de "por presión" o índice: m3/d/kg/cm2, kgf/cm2, "IP", etc.
-  if (
-    /\/\s*(kgf?\/?cm2)\b/i.test(txt) || // /kg/cm2 o /kgf/cm2
-    /\bkgf?\/?cm2\b/i.test(txt) || // kg/cm2 o kgf/cm2
-    /\bIP\b/i.test(txt) // menciona IP
-  ) {
-    return null;
-  }
-
-  // si no contiene unidad de V/T conocida, también lo descartamos
-  if (!/\b(m3\/d|bbl\/d|bpd|mpcd|bpm|l\/s|qt\s*=)/i.test(txt)) {
-    return null;
-  }
-
-  return txt;
-}
-
 /** ¿Hay palabras de canhoneo/punzado en el texto crudo? */
 function hasPunzadoKeywords(text: string) {
   return /(canhone|punzad|perforad|tiros?)/i.test(text);
@@ -769,6 +648,107 @@ function extractInjectivityPsi(text: string): string | null {
   return uniq.length ? uniq.join("; ") : null;
 }
 
+// --- helpers de normalización y segmentación por eventos ---
+function normalizeLite(s: string) {
+  return s
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "") // sin acentos
+    .replace(/\r/g, "")
+    .replace(/[ \t]+/g, " ")
+    .toLowerCase()
+    .trim();
+}
+
+type Evento = { idx: number; start: number; end: number; text: string };
+
+// Parte el texto en eventos que comienzan con "- "
+function splitEventsByDash(text: string): Evento[] {
+  const src = text.replace(/\r/g, "");
+  const lines = src.split("\n");
+  // offsets de inicio de cada línea para poder mapear índices
+  const offsets: number[] = [];
+  let acc = 0;
+  for (const ln of lines) {
+    offsets.push(acc);
+    acc += ln.length + 1;
+  }
+
+  const bulletIdxs: number[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (/^\s*-\s+\S/.test(lines[i])) bulletIdxs.push(offsets[i]);
+  }
+  if (bulletIdxs.length === 0)
+    return [{ idx: 0, start: 0, end: src.length, text: src }];
+
+  const out: Evento[] = [];
+  for (let i = 0; i < bulletIdxs.length; i++) {
+    const start = bulletIdxs[i];
+    const end = i + 1 < bulletIdxs.length ? bulletIdxs[i + 1] : src.length;
+    out.push({ idx: i, start, end, text: src.slice(start, end).trim() });
+  }
+  return out;
+}
+
+// Busca una posición "ancla" del test en el texto original
+function findTestAnchorIndex(t: Ensayo, text: string): number {
+  const name = (t.nombre ?? "").toUpperCase();
+  const num = (t.numero ?? "").replace(/\s+/g, "");
+  const patterns: RegExp[] = [];
+
+  // TI (teste de injetividade)
+  if (/^TI\b/.test(name) || /INJETIV|INJECTIV|INYECTIV/i.test(name)) {
+    patterns.push(/\bTI\b[ -]?\d*/i, /teste\s+de\s+inj(et|ec)tiv/i);
+  }
+  // TF/TFR/DST/RPS
+  if (/^TF\b/.test(name)) patterns.push(/\bTF-?\s*\d*/i);
+  if (/^TFR\b/.test(name)) patterns.push(/\bTFR-?\s*\d*/i);
+  if (/^DST\b/.test(name)) patterns.push(/\bDST\b/i);
+  if (/^RPS\b/.test(name)) patterns.push(/\bRPS-?\s*\d*/i);
+
+  // Si hay número, intentá con él (RPS-01, TI-2, etc.)
+  if (num) {
+    const base = name.split(/\s|-/)[0] || "";
+    if (base) patterns.push(new RegExp(`\\b${base}\\s*-?\\s*0*${num}\\b`, "i"));
+  }
+
+  let best = -1;
+  for (const re of patterns) {
+    const pos = text.search(re);
+    if (pos >= 0 && (best < 0 || pos < best)) best = pos;
+  }
+  return best;
+}
+
+function eventIndexForPos(events: Evento[], pos: number): number {
+  if (pos < 0) return -1;
+  for (let i = 0; i < events.length; i++) {
+    if (pos >= events[i].start && pos < events[i].end) return i;
+  }
+  return -1;
+}
+
+// ¿needle aparece dentro del evento? (comparación normalizada)
+function includesInEvent(evText: string, needle: string): boolean {
+  if (!needle) return false;
+  const H = normalizeLite(evText);
+  const N = normalizeLite(needle);
+  return N.length > 0 && H.includes(N);
+}
+
+function pickFechaPreferida(
+  fechaTexto?: string | null,
+  fechaISO?: string | null
+) {
+  const raw = (fechaTexto || fechaISO || "").trim();
+  if (!raw) return "";
+
+  // Detecta: "08 a 14/07/2010", "08–14/07/2010", "08-14/07/2010", "12/06 a 14/06/2010"
+  const m = raw.match(
+    /(?:^|.*?)(\d{1,2}(?:\/\d{1,2}(?:\/\d{2,4})?)?)\s*(?:a|al|até|–|-)\s*(\d{1,2}(?:\/\d{1,2}(?:\/\d{2,4})?)?)$/i
+  );
+  return m ? m[2] : raw;
+}
+
 /* ==================== Core ==================== */
 
 async function summarizeOne(
@@ -787,6 +767,7 @@ async function summarizeOne(
   let punzados: Punzado[] = [];
   let tests: Ensayo[] = [];
   let cementaciones: CementacionTapon[] = [];
+  let estimulaciones: Estimulacion[] = [];
 
   const tryParse = (txt: string) => {
     const obj = JSON.parse(txt);
@@ -795,20 +776,25 @@ async function summarizeOne(
       punzados: normalizePunzados(obj?.punzados ?? []),
       tests: normalizeEnsayos(obj?.tests ?? []),
       cementaciones: normalizeCementaciones(obj?.cementaciones ?? []),
+      estimulaciones: normalizeEstimulaciones(obj?.estimulaciones ?? []),
     };
   };
 
   try {
-    ({ resumen, punzados, tests, cementaciones } = tryParse(content));
+    ({ resumen, punzados, tests, cementaciones, estimulaciones } =
+      tryParse(content));
+    console.log("PUNZADOS DESDE LLM --> ", estimulaciones);
   } catch {
     const sliced = content.replace(/^[\s\S]*?{/, "{").replace(/}[\s\S]*$/, "}");
     try {
-      ({ resumen, punzados, tests, cementaciones } = tryParse(sliced));
+      ({ resumen, punzados, tests, cementaciones, estimulaciones } =
+        tryParse(sliced));
     } catch {
       resumen = content.slice(0, 300).trim();
       punzados = [];
       tests = [];
       cementaciones = [];
+      estimulaciones = [];
     }
   }
 
@@ -816,29 +802,47 @@ async function summarizeOne(
   const normText = normalizeDomainTypos(item.text);
   tests = fillMissingIntervals(tests, normText);
   const soproEnBloque = extractSoproBlock(normText);
-  tests = tests.map((t) => {
-    // 1) Traé la frase completa de “Recuperado …” si el modelo no la entregó
-    const recTxt =
-      t.recuperadoTexto ?? extractRecuperadoTextoFromBlock(normText) ?? null;
 
-    // 2) Si no vino fluido, inferilo a partir del texto de recupero (óleo/agua/gas)
+  const events = splitEventsByDash(normText);
+  const fechaIntervencion = pickFechaPreferida(item.fechaTexto, item.fechaISO);
+
+  tests = tests.map((t) => {
+    // evento al que pertenece el test
+    const anchorPos = findTestAnchorIndex(t, normText);
+    const evIdx = eventIndexForPos(events, anchorPos);
+    const evText = evIdx >= 0 ? events[evIdx].text : null;
+
+    // 1) Recuperado: conservar solo si está dentro del evento del test
+    const recTxt = t.recuperadoTexto ?? null;
+    // if (recTxt && evText && !includesInEvent(evText, recTxt)) {
+    //   recTxt = null;
+    // }
+
+    // 2) Fluido a partir del recuperado (si existe)
     const fluidFromRec = guessFluidoFromRecuperado(recTxt);
     const fluido = normalizeFluidTerms(
       t.fluidoRecuperado ?? fluidFromRec ?? null
     );
-    const sopro = normalizeSoproLabel(t.sopro ?? soproEnBloque ?? null);
+
+    // 3) SOPRO: idem, solo si pertenece al evento del test (sin fallback global)
+    let soproLLM = t.sopro ?? null;
+    if (soproLLM && evText && !includesInEvent(evText, soproLLM)) {
+      soproLLM = null;
+    }
+
+    // 4) Presión: si es TI, extraer psi solo del evento (o del bloque si no hay evento)
     const presion =
       t.presion ??
-      (isInjectivityTest(t) ? extractInjectivityPsi(normText) : null);
+      (isInjectivityTest(t) ? extractInjectivityPsi(evText ?? normText) : null);
 
     return {
       ...t,
       presion,
-      sopro,
-      fecha: t.fecha, // sin tocar
-      vazao: sanitizeVazao(t.vazao), // descarta IP/Pe/etc. si no es V/T válido
-      recuperadoTexto: recTxt, // prioriza la frase completa
-      fluidoRecuperado: fluido, // lista consolidada “óleo y agua”, etc.
+      sopro: normalizeSoproLabel(soproLLM),
+      fecha: t.fecha ?? fechaIntervencion,
+      vazao: sanitizeVazao(t.vazao),
+      recuperadoTexto: recTxt,
+      fluidoRecuperado: fluido,
       observacion: normalizeFluidTerms(t.observacion),
     };
   });
@@ -846,13 +850,19 @@ async function summarizeOne(
   cementaciones = filterCementacionesForPerforated(cementaciones, normText);
   punzados = filterPunzadosByKeywords(normText, punzados);
 
+  estimulaciones = estimulaciones.map((e) => ({
+    ...e,
+    fecha: e.fecha || fechaIntervencion,
+    vazao: sanitizeVazao(e.vazao || null),
+  }));
+
   // Asegurar BPP en resumen si estaba en el texto
   resumen = normalizeResumenTerms(resumen)
     .replace(/\s{2,}/g, " ")
-    .trim(); // "aceite" -> "óleo"
-  resumen = ensureBPPInResumen(resumen, normText); // fuerza mención de BPP si apareció en el texto
+    .trim();
+  resumen = ensureBPPInResumen(resumen, normText);
 
-  return { resumen, punzados, tests, cementaciones };
+  return { resumen, punzados, tests, cementaciones, estimulaciones };
 }
 
 export async function POST(req: Request) {
@@ -885,6 +895,7 @@ export async function POST(req: Request) {
       punzados: Punzado[];
       tests: Ensayo[];
       cementaciones: CementacionTapon[];
+      estimulaciones: Estimulacion[];
     }> = [];
 
     for (const it of items) {
@@ -897,6 +908,7 @@ export async function POST(req: Request) {
         punzados: out.punzados,
         tests: out.tests,
         cementaciones: out.cementaciones,
+        estimulaciones: out.estimulaciones,
       });
     }
 
