@@ -118,6 +118,20 @@ Salida (solo tests):
   }
 ]
 
+[Reglas de VAZÃO/Q (tipo de caudal)]
+- Interpretar las variantes de Q de forma **explícita** y reflejarlo en el campo "vazao" agregando, entre paréntesis, el tipo:
+  * "Q" (sin sufijo)  → caudal total.     Ej.: "Q=200 bbl/d" → "200 bbl/d"
+  * "Qo", "Q óleo"    → caudal de óleo.   Ej.: "Qo = 120 bpd" → "120 bpd (óleo)"
+  * "Qg", "Q gás"     → caudal de gás.    Ej.: "Qg = 44.000 m3/d" → "44.000 m3/d (gás)"
+  * "Qa", "Q água"    → caudal de água.   Ej.: "Qa = 15 m3/d" → "15 m3/d (água)"
+- Aceptar mayúsculas/minúsculas y variantes con/ sin "=" y con/ sin espacios (p. ej., "Q=...", "Qo ...", "Qg= ...").
+- Si en una misma línea hay **múltiples** Q (p. ej., "Qo=5 m3/d e Qg=100 m3/d"), concatenar en "vazao" separando por "; ":
+  "5 m3/d (óleo); 100 m3/d (gás)".
+- Si **solo** aparece "Q" sin sufijo → tratar como **total** (no agregar paréntesis).
+- Esta normalización aplica **tanto** a "tests[].vazao" como a "estimulaciones[].vazao".
+- Mantener la unidad tal como aparece (bbl/d, bpd, m3/d, BPM, L/s, etc.).
+
+
 [Reglas de SOPRO/FLUXO]
 - Tratar "sopro", "fluxo/flujo/flow" y "surgência/surgiu/surgió" como el **mismo concepto** y registrar TODO en el campo "sopro".
 - Incluir también **hitos de flujo**: "1º fluxo/primer flujo/first flow", "gás/óleo na superfície", "chama/llama", "imediato", con sus **tiempos** si aparecen.
@@ -144,12 +158,25 @@ Entrada: (sem/ sin mención)
 [Otras reglas]
 - Diferenciar RECUPERADO vs. VAZÃO (solo V/T: m3/d, bbl/d, BPD, MPCD, BPM, L/s, Qt=...).
 - "fluidoRecuperado": listar TODOS los fluidos recuperados si hay.
+- Si "fluidoRecuperado" es nulo **o** indica solo limpieza (lama/lodo/mud/fluido de perforación)
+  **y** existe un Q tipado: usar ese/ésos como "fluidoRecuperado".
+  Mapeo: Qo → "óleo"; Qg → "gás"; Qa → "agua".
+  (Si hay varios, unir con " y "). No modificar "recuperadoTexto".
+- Aceptar Q tipado tanto en tokens (Qo/Qg/Qa) como en "vazao" normalizada con paréntesis
+  (p.ej., "44.000 m3/d (gás)").
+- Si solo hay "Q" sin sufijo, NO alteres "fluidoRecuperado".
 - "recuperadoTexto": copiar/condensar la(s) oración(es) de recupero con números y unidades.
 - TI: completar "presion" si aparece (psi).
 - "fecha" del test puede ser la del bloque si no hay otra.
 - No deducir fluido a partir de PVT.
 - Resultado “seco” → "fluidoRecuperado": null y anotar en "observacion".
 - "Obs./Observación:" → incorporar al test más relevante.
+- Si aparece "AOF" (Absolute Open Flow) en el bloque, COPIAR la métrica completa (valor + unidad + tipo si hubiese, p.ej. "(gás)") a "observacion" del test correspondiente.
+  * Ej.: "AOF=50000 m3/d (gás)" → observacion: "AOF=50000 m3/d (gás)".
+  * No completar "vazao" con AOF (AOF no es caudal operativo del test).
+  * Si hay varios tests, asociarlo al de flujo/poço aberto (TF/TFR/DST). Si no se distingue, usar el primer test con "vazao".
+
+
 
 [Reglas ESPECÍFICAS para TI (teste de injetividade)]
 - Un TI NO es un ensayo de flujo/producción. En todo TI:

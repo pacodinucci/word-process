@@ -1,5 +1,5 @@
 // app/api/word/summarize/route.ts
-import { sanitizeVazao, toNum } from "@/lib/helpers";
+import { deaccent, sanitizeVazao, toNum } from "@/lib/helpers";
 import { normalizeEstimulaciones } from "@/lib/helpers/estimulaciones";
 import { fewShot } from "@/lib/prompts";
 import { NextResponse } from "next/server";
@@ -783,7 +783,6 @@ async function summarizeOne(
   try {
     ({ resumen, punzados, tests, cementaciones, estimulaciones } =
       tryParse(content));
-    console.log("PUNZADOS DESDE LLM --> ", estimulaciones);
   } catch {
     const sliced = content.replace(/^[\s\S]*?{/, "{").replace(/}[\s\S]*$/, "}");
     try {
@@ -820,9 +819,20 @@ async function summarizeOne(
 
     // 2) Fluido a partir del recuperado (si existe)
     const fluidFromRec = guessFluidoFromRecuperado(recTxt);
-    const fluido = normalizeFluidTerms(
+    let fluido = normalizeFluidTerms(
       t.fluidoRecuperado ?? fluidFromRec ?? null
     );
+
+    if (
+      fluido &&
+      /\b(lama|lodo|mud|fluido\s+de\s+perfura[cç]?[aã]o)\b/i.test(fluido) &&
+      t.vazao
+    ) {
+      const v = t.vazao.toLowerCase();
+      if (/oleo\b|q[\s=]*o/.test(deaccent(v))) fluido = "óleo";
+      else if (/gas\b|q[\s=]*g/.test(deaccent(v))) fluido = "gas";
+      else if (/agua\b|q[\s=]*a/.test(deaccent(v))) fluido = "agua";
+    }
 
     // 3) SOPRO: idem, solo si pertenece al evento del test (sin fallback global)
     let soproLLM = t.sopro ?? null;
@@ -837,6 +847,10 @@ async function summarizeOne(
 
     return {
       ...t,
+      nombre:
+        [t.nombre, t.numero]
+          .filter((s): s is string => !!s && s.trim().length > 0)
+          .join("-") || null,
       presion,
       sopro: normalizeSoproLabel(soproLLM),
       fecha: t.fecha ?? fechaIntervencion,

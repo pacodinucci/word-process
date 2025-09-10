@@ -30,3 +30,7 @@ export function sanitizeVazao(s: string | null | undefined): string | null {
 
   return txt;
 }
+
+export function deaccent(s: string) {
+  return s.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+}
