@@ -1,120 +1,26 @@
-// app/page.tsx
 "use client";
+
 import { useEffect, useMemo, useState } from "react";
 import { WordDropzone } from "@/components/global/word-dropzone";
 import { ResponsiveDialog } from "@/components/global/responsive-dialog";
 import { getErrorMessage } from "@/lib/utils";
-
-// Para el diálogo (resumen)
-type Punzado = {
-  desde?: number | null;
-  hasta?: number | null;
-  unidad?: string | null;
-};
-
-type Ensayo = {
-  nombre?: string | null;
-  numero?: string | null;
-  fecha?: string | null;
-  intervalo?: {
-    desde?: number | null;
-    hasta?: number | null;
-    unidad?: string | null;
-  } | null;
-  fluidoRecuperado?: string | null;
-  totalRecuperado?: { valor?: number | null; unidad?: string | null } | null;
-  recuperadoTexto?: string | null;
-  vazao?: string | null;
-  swab?: string | null;
-  nivelFluido?: string | null;
-  salinidad?: string | null;
-  bsw?: string | null;
-  gradosAPI?: string | null;
-  sopro?: string | null;
-  presion?: string | null;
-  observacion?: string | null;
-};
-
-type CementacionTapon = {
-  tipo: "cementacion" | "squeeze" | "tampon_cemento" | "bpp";
-  intervalo?: {
-    desde?: number | null;
-    hasta?: number | null;
-    unidad?: string | null;
-  } | null; // requerido para cementación/squeeze (cuando aplique)
-  profundidad?: number | null; // para BPP (punto único)
-  unidadProfundidad?: string | null; // "m" por defecto si hay profundidad
-  zona?: string | null; // CPS-01, SERRARIA, etc.
-  observacion?: string | null;
-};
-
-// Crudo que devuelve /api/word/interventions
-type RawIntervencion = {
-  index: number;
-  fechaISO: string | null;
-  fechaTexto: string | null;
-  text: string;
-};
-
-type Estimulacion = {
-  tipo: "acidizacion" | "fractura" | "minifractura";
-  fecha?: string | null;
-  intervalo?: {
-    desde?: number | null;
-    hasta?: number | null;
-    unidad?: string | null;
-  } | null;
-  fluido?: string | null;
-  presionInicial?: string | null;
-  presionMedia?: string | null;
-  presionFinal?: string | null;
-  vazao?: string | null;
-  volumen?: { valor?: number | null; unidad?: string | null } | null;
-  observacion?: string | null;
-};
-
-/** Helpers de UI para “Recuperado” (sopro + recuperado) */
-function ensureEndsWithDot(s: string) {
-  const t = s?.trim?.() ?? "";
-  if (!t) return "";
-  return /[.!?]$/.test(t) ? t : t + ".";
-}
-function mkRecuperadoLinea(t: Ensayo) {
-  const parts: string[] = [];
-  if (t.sopro) parts.push(ensureEndsWithDot(t.sopro));
-  if (t.recuperadoTexto) {
-    parts.push(ensureEndsWithDot(t.recuperadoTexto));
-  } else if (t.totalRecuperado?.valor != null || t.totalRecuperado?.unidad) {
-    const num = t.totalRecuperado?.valor ?? "";
-    const uni = t.totalRecuperado?.unidad ?? "";
-    const recTxt = t.recuperadoTexto ?? "";
-    parts.push(
-      ensureEndsWithDot(`${recTxt} Total Recuperado ${num} ${uni}`.trim())
-    );
-  }
-  return parts
-    .join(" ")
-    .replace(/\s{2,}/g, " ")
-    .trim();
-}
-
-const fmtVolumen = (
-  v?: { valor?: number | null; unidad?: string | null } | null
-) =>
-  v && (v.valor != null || v.unidad)
-    ? `${v.valor ?? ""} ${v.unidad ?? ""}`
-    : null;
-
-const labelTipoEst = (t: Estimulacion["tipo"]) =>
-  t === "acidizacion"
-    ? "Acidización"
-    : t === "fractura"
-    ? "Fractura"
-    : "Minifractura";
+import { createInitialWellState, type WellState } from "@/lib/well-state";
+import {
+  CementacionTapon,
+  Ensayo,
+  Estimulacion,
+  Punzado,
+  RawIntervencion,
+} from "../types";
+import { fmtVolumen, labelTipoEst, mkRecuperadoLinea } from "@/lib/helpers";
+import { applyInterventionToWellState } from "@/lib/well-state-ops";
 
 export default function Home() {
   const [loading, setLoading] = useState(false);
   const [errorGeneral, setErrorGeneral] = useState<string | null>(null);
+  const [wellState, setWellState] = useState<WellState>(() =>
+    createInitialWellState()
+  );
 
   const [rawIntervenciones, setRawIntervenciones] = useState<RawIntervencion[]>(
     []
@@ -179,7 +85,7 @@ export default function Home() {
     setSummaryError(null);
     setDialogOpen(true);
 
-    if (summaryByIndex[idx]) return; // cache
+    if (summaryByIndex[idx]) return; // cache -> ya abre el modal con lo guardado
 
     const item = rawIntervenciones.find((x) => x.index === idx);
     if (!item) return;
@@ -196,23 +102,40 @@ export default function Home() {
         throw new Error(data?.error ?? `HTTP ${res.status}`);
 
       const s = data?.summaries?.[0];
+
+      // Normalizo arrays
+      const punzados = Array.isArray(s?.punzados) ? s.punzados : [];
+      const tests = Array.isArray(s?.tests) ? s.tests : [];
+      const cementaciones = Array.isArray(s?.cementaciones)
+        ? s.cementaciones
+        : [];
+      const estimulaciones = Array.isArray(s?.estimulaciones)
+        ? s.estimulaciones
+        : [];
+
+      // Guardo en los estados "byIndex" (para el modal)
       setSummaryByIndex((p) => ({ ...p, [idx]: s?.resumen || "(sin datos)" }));
-      setPunzadosByIndex((p) => ({
-        ...p,
-        [idx]: Array.isArray(s?.punzados) ? s.punzados : [],
-      }));
-      setTestsByIndex((p) => ({
-        ...p,
-        [idx]: Array.isArray(s?.tests) ? s.tests : [],
-      }));
-      setCementacionesByIndex((p) => ({
-        ...p,
-        [idx]: Array.isArray(s?.cementaciones) ? s.cementaciones : [],
-      }));
-      setEstimulacionesByIndex((p) => ({
-        ...p,
-        [idx]: Array.isArray(s?.estimulaciones) ? s.estimulaciones : [],
-      }));
+      setPunzadosByIndex((p) => ({ ...p, [idx]: punzados }));
+      setTestsByIndex((p) => ({ ...p, [idx]: tests }));
+      setCementacionesByIndex((p) => ({ ...p, [idx]: cementaciones }));
+      setEstimulacionesByIndex((p) => ({ ...p, [idx]: estimulaciones }));
+
+      // ⬇️ Actualizo el estado global del pozo
+      const fecha =
+        (s && (s.fechaISO || s.fecha || null)) ??
+        item.fechaISO ??
+        item.fechaTexto ??
+        null;
+
+      setWellState((prev) =>
+        applyInterventionToWellState(prev, {
+          fecha,
+          punzados,
+          cementaciones,
+          tests,
+          estimulaciones,
+        })
+      );
     } catch (e: unknown) {
       setSummaryError(getErrorMessage(e));
     } finally {
@@ -305,6 +228,39 @@ export default function Home() {
     dialogOpen,
   ]);
 
+  useEffect(() => {
+    console.log("WELL STATE --> ", wellState);
+  }, [wellState]);
+
+  // Orden cronológico + gating (solo una intervención habilitada a la vez)
+  const chrono = useMemo(() => {
+    // ordenamos por fechaISO asc; si no hay fecha, caen al final y se desempata por index
+    const sorted = [...rawIntervenciones].sort((a, b) => {
+      const da = a.fechaISO || "";
+      const db = b.fechaISO || "";
+      if (da && db) return da.localeCompare(db) || a.index - b.index;
+      if (da) return -1;
+      if (db) return 1;
+      return a.index - b.index;
+    });
+
+    const order = sorted.map((i) => i.index);
+    const pos = new Map<number, number>();
+    order.forEach((idx, i) => pos.set(idx, i));
+
+    // ¿cuántas están completas de forma consecutiva desde el inicio?
+    let completed = 0;
+    while (completed < order.length && summaryByIndex[order[completed]]) {
+      completed++;
+    }
+
+    const nextIndex = order[completed] ?? null; // solo esta se habilita
+    return { order, pos, completed, nextIndex };
+  }, [rawIntervenciones, summaryByIndex]);
+
+  const canAnalyze = (idx: number) => chrono.nextIndex === idx;
+  const orderPos = (idx: number) => chrono.pos.get(idx) ?? null;
+
   return (
     <main className="max-w-5xl mx-auto p-6 space-y-6">
       <WordDropzone onPickFile={handleFileUpload} isProcessingFile={busy} />
@@ -318,40 +274,65 @@ export default function Home() {
 
       {/* Lista de intervenciones crudas, cada una con su botón */}
       <div className="grid gap-3">
-        {rawIntervenciones.map((b) => (
-          <article key={b.index} className="border rounded-lg p-4">
-            <div className="flex items-center gap-2 mb-2">
-              <span className="text-xs uppercase tracking-wide px-2 py-0.5 rounded-full bg-neutral-100">
-                Intervención {b.index}
-              </span>
-              {fmtFecha(b) && (
-                <span className="text-xs text-neutral-500 ml-auto">
-                  {fmtFecha(b)}
+        {rawIntervenciones.map((b) => {
+          const enabledToAnalyze = canAnalyze(b.index); // habilita el PRIMER análisis (orden)
+          const hasSummary = Boolean(summaryByIndex[b.index]); // ya fue analizada
+          const canOpen = hasSummary || enabledToAnalyze; // si hay resumen, siempre se puede abrir
+
+          const pos = orderPos(b.index);
+
+          return (
+            <article key={b.index} className="border rounded-lg p-4">
+              <div className="flex items-center gap-2 mb-2">
+                <span className="text-xs uppercase tracking-wide px-2 py-0.5 rounded-full bg-neutral-100">
+                  Intervención {b.index}
                 </span>
-              )}
-            </div>
 
-            <pre className="whitespace-pre-wrap text-sm">{b.text}</pre>
+                {pos != null && (
+                  <span className="text-xs text-neutral-500">
+                    #{pos + 1} en orden cronológico
+                  </span>
+                )}
 
-            <div className="mt-3 flex items-center gap-3">
-              <button
-                className="px-3 py-1.5 rounded bg-black text-white text-sm disabled:opacity-50"
-                onClick={() => abrirYAnalizar(b.index)}
-                disabled={busy}
-              >
-                {busy && selectedIndex === b.index
-                  ? "Analizando…"
-                  : "Analizar con IA"}
-              </button>
-              {summaryByIndex[b.index] && (
-                <span className="text-xs text-green-700">Resumen listo</span>
-              )}
-            </div>
-          </article>
-        ))}
+                {fmtFecha(b) && (
+                  <span className="text-xs text-neutral-500 ml-auto">
+                    {fmtFecha(b)}
+                  </span>
+                )}
+              </div>
+
+              <pre className="whitespace-pre-wrap text-sm">{b.text}</pre>
+
+              <div className="mt-3 flex items-center gap-3">
+                <button
+                  className="px-3 py-1.5 rounded bg-black text-white text-sm disabled:opacity-50"
+                  onClick={() => abrirYAnalizar(b.index)}
+                  disabled={busy || !canOpen}
+                  title={
+                    !canOpen
+                      ? "Primero analizá las intervenciones anteriores (orden cronológico)"
+                      : undefined
+                  }
+                >
+                  {busy && selectedIndex === b.index
+                    ? "Analizando…"
+                    : hasSummary
+                    ? "Ver resumen"
+                    : enabledToAnalyze
+                    ? "Analizar con IA"
+                    : "Bloqueado"}
+                </button>
+
+                {hasSummary && (
+                  <span className="text-xs text-green-700">Resumen listo</span>
+                )}
+              </div>
+            </article>
+          );
+        })}
       </div>
 
-      {/* ===== Dialog ===== */}
+      {/* Modal */}
       <ResponsiveDialog
         open={dialogOpen}
         onOpenChange={(v) => setDialogOpen(v)}

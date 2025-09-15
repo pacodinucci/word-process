@@ -829,9 +829,9 @@ async function summarizeOne(
       t.vazao
     ) {
       const v = t.vazao.toLowerCase();
-      if (/oleo\b|q[\s=]*o/.test(deaccent(v))) fluido = "óleo";
-      else if (/gas\b|q[\s=]*g/.test(deaccent(v))) fluido = "gas";
-      else if (/agua\b|q[\s=]*a/.test(deaccent(v))) fluido = "agua";
+      if (/oleo\b|q[\s=]*o/.test(deaccent(v))) fluido = "Oleo";
+      else if (/gas\b|q[\s=]*g/.test(deaccent(v))) fluido = "Gas";
+      else if (/agua\b|q[\s=]*a/.test(deaccent(v))) fluido = "Agua";
     }
 
     // 3) SOPRO: idem, solo si pertenece al evento del test (sin fallback global)
